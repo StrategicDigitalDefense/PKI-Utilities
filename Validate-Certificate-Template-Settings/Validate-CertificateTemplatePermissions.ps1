@@ -1,16 +1,3 @@
-<#
-    .SYNOPSIS
-    This script retrieves the permissions (and optionally most of the rest of settings) 
-    for a Certificate Template used by the Active Directory Certificate Services: 
-    Certification Authority, from Active Directory and writes the output as a JSON-encoded
-    struct
-
-    This has been useful for reviewing and auditing templates, without having to flip through
-    the many panels in the properties of the template in the MMC
-    
-#>
-
-
 [cmdletBinding(DefaultParameterSetName="PermissionsOnly")]Param(
     [Parameter(Mandatory=$true,ParameterSetName="PermissionsOnly")]
     [Parameter(Mandatory=$true,ParameterSetName="MultiPermissionsOnly")]
@@ -112,7 +99,7 @@ function Get-TemplateObject() {
         if($TemplateObject) {
             return($TemplateObject) ;
         } else {
-            throw ([string]("No template found in " + $forest + " named " + $TemplateName)) ;
+           throw ([string]("No template found in " + $forest + " named " + $TemplateName)) ;
         }
     } catch {
  
@@ -377,11 +364,18 @@ function Get-TemplatePermissions() {
             }
         } elseif($ACE.IdentityReference.GetType() -eq [System.Security.Principal.NTAccount]) {
             $PrincipalName=$ACE.IdentityReference.Value.ToString() ;
+            try {
+                $domain,$principal=$PrincipalName -split '\\'
+                $PrincipalDisplayName=(Get-ADUser -Identity $principal -Server $domain -Properties DisplayName).DisplayName
+            } catch {
+                $PrincipalDisplayName=$PrincipalName ;
+            }
         } else {
  
         }
         $Accumulator += New-Object -TypeName PSCustomObject -Property @{
             "Principal" = $PrincipalName ;
+            "DisplayName" = $PrincipalDisplayName ;
             "Rule" = $ACE.AccessControlType.ToString() ;
             "Persimmon" = $persimmon ;
         } ;
@@ -390,7 +384,7 @@ function Get-TemplatePermissions() {
     $TemplateSettings=[ordered]@{} ;
     $TemplateSettings["TemplateName"]=$TemplateObject["DisplayName"][0] ;
     [string]([datetime]::UtcNow.ToString() + ":`t" + 'TemplateSettings["TemplateName"]' + " : " + $TemplateObject["DisplayName"][0] ) |Write-Verbose ;
-    $TemplateSettings["Permissions"]=$Accumulator |Select-Object -Property "Principal","Rule","Persimmon" |Sort-Object -Property "Principal" ;
+    $TemplateSettings["Permissions"]=$Accumulator |Select-Object -Property "Principal","DisplayName","Rule","Persimmon" |Sort-Object -Property "Principal" ;
     if($AdditionalInformation) {
         [string]([datetime]::UtcNow.ToString() + ":`t" + "We want more template data than just the persimmons") |Write-Verbose ;
         $TemplateSettings["Enrollment"]=Parse-EnrollmentFlags -EnrollmentFlags $TemplateObject.'msPKI-Enrollment-Flag' ;
@@ -405,16 +399,53 @@ function Get-TemplatePermissions() {
         $EKU=@() ;
         foreach($ekuse in $TemplateObject.'msPKI-Certificate-Application-Policy') {
             switch($ekuse) {
-                "1.3.6.1.5.5.7.3.1" { $EKU += "serverAuth" ; Break }
-                "1.3.6.1.5.5.7.3.2" { $EKU += "clientAuth" ; Break }
-                "1.3.6.1.5.5.7.3.3" { $EKU += "codeSigning" ; Break }
-                "1.3.6.1.5.5.7.3.4" { $EKU += "emailProtection" ; Break }
-                "1.3.6.1.5.5.7.3.8" { $EKU += "timeStamping" ; Break }
-                "1.3.6.1.5.5.7.3.9" { $EKU += "OCSPSigning" ; Break }
-                "1.3.6.1.4.1.311.10.3.4" { $EKU += "EncryptingFileSystem" ; Break }
-                "1.3.6.1.4.1.311.10.3.12" { $EKU += "DocumentSigning" ; Break }
+                "1.3.6.1.4.1.311.10.3.1" { $EKU += "Signer of CTLs -- szOID_KP_CTL_USAGE_SIGNING" ; Break }
+                "1.3.6.1.4.1.311.10.3.2" { $EKU += "Signer of TimeStamps -- szOID_KP_TIME_STAMP_SIGNING" ; Break }
+                "1.3.6.1.4.1.311.10.3.3" { $EKU += "Microsoft Server Gated Crypto (SGC)" ; Break }
+                "1.3.6.1.4.1.311.10.3.4" { $EKU += "szOID_EFS_CRYPTO" ; Break }
+                "1.3.6.1.4.1.311.10.3.5" { $EKU += "Can use Windows Hardware Compatible (WHQL) -- szOID_WHQL_CRYPTO" ; Break }
+                "1.3.6.1.4.1.311.10.3.6" { $EKU += "Signed by the NT5 build lab -- szOID_NT5_CRYPTO" ; Break }
+                "1.3.6.1.4.1.311.10.3.7" { $EKU += "Signed by and OEM of WHQL -- szOID_OEM_WHQL_CRYPTO" ; Break }
+                "1.3.6.1.4.1.311.10.3.8" { $EKU += "Signed by the Embedded NT -- szOID_EMBEDDED_NT_CRYPTO" ; Break }
+                "1.3.6.1.4.1.311.10.3.9" { $EKU += "Signer of a CTL containing trusted roots -- szOID_ROOT_LIST_SIGNER" ; Break }
+                "1.3.6.1.4.1.311.10.3.10" { $EKU += "Can sign cross-cert and subordinate CA requests with qualified subordination (name constraints, policy mapping, etc.) -- szOID_KP_QUALIFIED_SUBORDINATION" ; Break }
+                "1.3.6.1.4.1.311.10.3.11" { $EKU += "Can be used to encrypt/recover escrowed keys -- szOID_KP_KEY_RECOVERY" ; Break }
+                "1.3.6.1.4.1.311.10.3.12" { $EKU += "Signer of documents -- szOID_KP_DOCUMENT_SIGNING" ; Break }
+                "1.3.6.1.4.1.311.10.3.13" { $EKU += "Extended key usage used by Microsoft Authenticode to limit the lifetime of the code signature to the expiration of the code signing certificate (szOID_KP_LIFETIME_SIGNING)" ; Break }
+                "1.3.6.1.4.1.311.10.3.14" { $EKU += "szOID_KP_MOBILE_DEVICE_SOFTWARE" ; Break }
+                "1.3.6.1.5.5.7.3.1" { $EKU += "Server Auth" ; Break }
+                "1.3.6.1.5.5.7.3.2" { $EKU += "Client Auth" ; Break }
+                "1.3.6.1.5.5.7.3.3" { $EKU += "Code Signing" ; Break }
+                "1.3.6.1.5.5.7.3.4" { $EKU += "email Protection" ; Break }
+                "1.3.6.1.5.5.7.3.5" { $EKU += "IPSEC End System" ; Break }
+                "1.3.6.1.5.5.7.3.6" { $EKU += "IPSEC Tunnel" ; Break }
+                "1.3.6.1.5.5.7.3.7" { $EKU += "IPSEC User" ; Break }
+                "1.3.6.1.5.5.7.3.8" { $EKU += "Time Stamping" ; Break }
+                "1.3.6.1.5.5.7.3.9" { $EKU += "OCSP Response Signing" ; Break }
+                "1.3.6.1.5.5.7.3.10" { $EKU += "PKIX Data Validation and Certification Server Protocols" ; Break }
+                "1.3.6.1.5.5.7.3.11" { $EKU += "OBSOLETE: sbgpCertAAServerAuth" ; Break }
+                "1.3.6.1.5.5.7.3.12" { $EKU += "OBSOLETE: id-kp-scvp-responder" ; Break }
+                "1.3.6.1.5.5.7.3.13" { $EKU += "EAP-Over-PPP" ; Break }
+                "1.3.6.1.5.5.7.3.14" { $EKU += "EAP-Ove-LAN" ; Break }
+                "1.3.6.1.5.5.7.3.15" { $EKU += "SCVP Server" ; Break }
+                "1.3.6.1.5.5.7.3.16" { $EKU += "SCVP Client" ; Break }
+                "1.3.6.1.5.5.7.3.17" { $EKU += "Internet Key Exchange (IKE)" ; Break }
+                "1.3.6.1.5.5.7.3.18" { $EKU += "Wireless Access Point (WAP) Access Controller (AC)" ; Break }
+                "1.3.6.1.5.5.7.3.19" { $EKU += "Control And Provisioning of Wireless Access Points (CAPWAP), Wireless Termination Points (WTP)" ; Break }
+                "1.3.6.1.5.5.7.3.20" { $EKU += "Session Initiation Protocol (SIP) " ; Break }
+                "1.3.6.1.5.5.7.3.21" { $EKU += "Secure Shell Client" ; Break }
+                "1.3.6.1.5.5.7.3.22" { $EKU += "Secure Shell Server" ; Break }
+                "1.3.6.1.5.5.7.3.23" { $EKU += "SEcure Neighbor Discovery (SEND) Router" ; Break }
+                "1.3.6.1.5.5.7.3.24" { $EKU += "SEcure Neighbor Discovery (SEND) Proxy" ; Break }
+                "1.3.6.1.5.5.7.3.25" { $EKU += "SEcure Neighbor Discovery (SEND) Owner" ; Break }
+                "1.3.6.1.5.5.7.3.26" { $EKU += "SEcure Neighbor Discovery (SEND) Proxied Owner" ; Break }
+                "1.3.6.1.5.5.7.3.27" { $EKU += "Certificate Management over Cryptographic message syntax (CMC) Certification Authorities (CA) " ; Break }
+                "1.3.6.1.5.5.7.3.28" { $EKU += "Certificate Management over Cryptographic message syntax (CMC) Registration Authorities (RA)" ; Break }
+                "1.3.6.1.5.5.7.3.29" { $EKU += "Certificate Management over Cryptographic message syntax (CMC) archive servers" ; Break }
                 "1.3.6.1.4.1.311.20.2.1" { $EKU += "Enrollment Agent" ; Break }
                 "1.3.6.1.4.1.311.20.2.2" { $EKU += "Smartcard Login" ; Break }
+                "1.3.6.1.4.1.311.20.2.3" { $EKU += "User Principal Name (UPN)" ; Break }
+                "1.3.6.1.4.1.311.54.1.2" { $EKU += "Remote Desktop Auth" ; Break }
             }
         }
         $TemplateSettings['AdditionalSettings']['Certificate-Application-Policy']=$EKU -join "; " ;
